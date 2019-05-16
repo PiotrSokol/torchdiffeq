@@ -1,7 +1,50 @@
 import abc
 import torch
+import numpy as np
 from .misc import _assert_increasing, _handle_unused_kwargs
 
+
+class RKSymplecticODESolver(object):
+    _metaclass__ = abc.ABCMeta
+
+    def __init__(self, tableau, **unused_kwargs):
+
+        _handle_unused_kwargs(self, unused_kwargs)
+        del unused_kwargs
+        self.tableau = tableau
+
+        if self.is_symmetric == False:
+            self.adjoint_tableau = self.make_adjoint_tableau()
+        else:
+            self.adjoint_tableau = tableau
+
+    def tableau_to_array(self):
+        """
+
+        :return: A, the Runge Kutta matrix
+        c 1 by 0 vector of nodes
+        b 1 by 0 vector of coefficients
+        """
+        nstages = len(self.tableau.c_sol)
+        A = np.zeros([nstages, nstages])
+        if len(self.tableau.beta) < nstages:
+            first = 1
+        else:
+            first = 0
+        for i in range(first, len(self.tableau.beta)):
+            A[i, :len(self.tableau.beta[i])] = np.array(self.tableau.beta[i])
+        b = np.array(self.tableau.alpha)
+        c = np.array(self.tableau.c_sol)
+        return A, b, c
+    def array_to_tableau(self):
+        raise NotImplementedError
+
+    @property
+    def is_symmetric(self):
+        pass
+
+    def make_adjoint_tableau(self):
+        pass
 
 class AdaptiveStepsizeODESolver(object):
     __metaclass__ = abc.ABCMeta
