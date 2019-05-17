@@ -1,6 +1,6 @@
 import torch
 from .misc import _scaled_dot_product, _convert_to_tensor, _is_finite, _select_initial_step, _handle_unused_kwargs
-from .solvers import AdaptiveStepsizeODESolver
+from .solvers import AdaptiveStepsizeODESolver, RungeKuttaAbstract
 from .rk_common import _RungeKuttaState, _ButcherTableau, _runge_kutta_step
 
 # Parameters from Tsitouras (2011).
@@ -63,7 +63,7 @@ def _abs_square(x):
     return torch.mul(x, x)
 
 
-class Tsit5Solver(AdaptiveStepsizeODESolver):
+class Tsit5Solver(AdaptiveStepsizeODESolver, RungeKuttaAbstract):
 
     def __init__(
         self, func, y0, rtol, atol, first_step=None, safety=0.9, ifactor=10.0, dfactor=0.2, max_num_steps=2**31 - 1,

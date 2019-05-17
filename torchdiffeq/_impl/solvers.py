@@ -4,7 +4,29 @@ import numpy as np
 from .misc import _assert_increasing, _handle_unused_kwargs
 
 
-class RKSymplecticODESolver(object):
+class RungeKuttaAbstract(object):
+    _metaclass__ = abc.ABCMeta
+
+
+class CheckpointingSolver(RungeKuttaAbstract):
+    def __new__(cls, decoratee):
+        mydict = decoratee.__dict__.copy()
+        mydict['chekpoint_times'] = []
+        mydict['nearest_checkpoint'] = []
+        mydict['checkpoint_values'] = []
+        cls = type('CheckpointingSolver',
+                   (CheckpointingSolver, decoratee.__class__),
+                   mydict)
+        return object.__new__(cls)
+
+    def griewank_optimal(self, T,B):
+        pass
+
+    def store_checkpoint(self):
+        pass
+
+
+class RKSymplecticODESolver(RungeKuttaAbstract):
     _metaclass__ = abc.ABCMeta
 
     def __init__(self, tableau, **unused_kwargs):
@@ -36,6 +58,7 @@ class RKSymplecticODESolver(object):
         b = np.array(self.tableau.alpha)
         c = np.array(self.tableau.c_sol)
         return A, b, c
+
     def array_to_tableau(self):
         raise NotImplementedError
 

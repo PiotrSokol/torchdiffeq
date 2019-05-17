@@ -1,5 +1,7 @@
 import torch as torch
 from torch import jit
+from .gradops import explicit_jacobian
+from .gradops import Rop
 import warnings
 
 
@@ -9,7 +11,7 @@ def fgmres(jv, b, x0, tol=torch.tensor(1e-6), restart_limit=20, maxiter=50, orth
         Implements an inner-outer preconditioned Flexible GMRES
     to solve a linear problem  Jx = b
     where A is implicitly given via matrix vector products through the function jv
-    :param jv: function implementing Jacobian vector product, or more generally any matrix vector product
+    :param nonlinear function
     :param b: torch.tensor n by 1 tensor
     :param x0: torch.tensor, initial guess
     :param tol: relative tolerance for terminating the loop
@@ -19,13 +21,14 @@ def fgmres(jv, b, x0, tol=torch.tensor(1e-6), restart_limit=20, maxiter=50, orth
     :return: x: the solution to the linear problem
     """
     dtype = b.dtype
+    device = b.device
     n = x0.shape[0]
     x = x0
     for iii in range(maxiter):
-        H = torch.zeros((maxiter+1, maxiter), dtype=dtype)
-        deltaH = torch.zeros((1, 1), dtype=dtype)
-        V = torch.zeros((n, maxiter+1), dtype=dtype)
-        Z = torch.zeros((n, maxiter), dtype=dtype)
+        H = torch.zeros((maxiter+1, maxiter), dtype=dtype).device
+        deltaH = torch.zeros((1, 1), dtype=dtype).device
+        V = torch.zeros((n, maxiter+1), dtype=dtype).device
+        Z = torch.zeros((n, maxiter), dtype=dtype).device
         bnorm = b.norm()
         r0 = b - jv(x0)
         beta = r0.norm()
@@ -34,7 +37,7 @@ def fgmres(jv, b, x0, tol=torch.tensor(1e-6), restart_limit=20, maxiter=50, orth
         # Arnoldi process starts here
         for ii in range(restart_limit):
             for j in range(n):
-                Z[:, [j]] = gmres(jv, V[:, [j]], x, dtype=dtype, tol=tol)
+                Z[:, [j]] = gmres(jv, V[:, [j]], x, device=device, dtype=dtype, tol=tol)
                 w = jv(Z[:, [j]])
                 wnormold = w.norm()
                 for reortho in range(2):
@@ -64,7 +67,7 @@ def fgmres(jv, b, x0, tol=torch.tensor(1e-6), restart_limit=20, maxiter=50, orth
 
 
 @jit.script
-def gmres(jv, b, x0, tol=torch.tensor(1e-6), restart_limit= 5, maxiter=5, orthotol=torch.tensor(1e-3), dtype=torch.float32):
+def gmres(jv, b, x0, device, tol=torch.tensor(1e-6), restart_limit= 5, maxiter=5, orthotol=torch.tensor(1e-3), dtype=torch.float32):
     """
     Implements a simple GMRES method with restart and no preconditioner
 
@@ -127,7 +130,7 @@ def test_gmres():
 
 @jit.script
 def newton_krylov(f, x, atol, rtol, maxit=40, maxit_fgmres=40,
-                  restart_limit=20, etamax = torch.tensor(0.9)):
+                  restart_limit=20, etamax=torch.tensor(0.9)):
         """
         Inexact Newton-Armijo iteration with Eisenstat-Walker forcing
         Implements a line search with a parabolic trust region
@@ -143,15 +146,15 @@ def newton_krylov(f, x, atol, rtol, maxit=40, maxit_fgmres=40,
         :param restart_limit:
         :param etamax:
         :return: solution x, code ierr
-        # ierr = 0 for successful termination
-        # ierr = 1 after maxit
-        # ierr = 2 after line search failure
+        # ierr = False for successful termination
+        # ierr = True after maxit or linesearch failure
         """
         dtype = x.type
-        alpha = torch.tensor(1e-4, dtype=dtype)  # sufficient decrease for line search
-        sigma0 = torch.tensor(1e-1, dtype=dtype)  # line search trust region param
-        sigma1 = torch.tensor(0.5, dtype=dtype)  # line search trust region param
-        gamma = torch.tensor(0.9, dtype=dtype)
+        device = x.device
+        alpha = torch.tensor(1e-4, dtype=dtype).device  # sufficient decrease for line search
+        sigma0 = torch.tensor(1e-1, dtype=dtype).device  # line search trust region param
+        sigma1 = torch.tensor(0.5, dtype=dtype).device  # line search trust region param
+        gamma = torch.tensor(0.9, dtype=dtype).device
         maxarm = 20  # number of step length reductions before failure reported
         itc = 0  # iteration counter
 
@@ -167,7 +170,7 @@ def newton_krylov(f, x, atol, rtol, maxit=40, maxit_fgmres=40,
 
             # step, errstep, inner_it_count, inner_f_evals  = \
             # dkrylov(f0, f, x, gmres_eta, lmaxit, restart_limit)
-            step = fgmres(f, f0, x, tol=gmres_eta)
+            step = fgmres(f, f0, x, tol=gmres_eta, restart_limit=restart_limit, maxiter=maxit_fgmres)
             # line search starts here
             xold = x
             lbd = 1
@@ -198,7 +201,7 @@ def newton_krylov(f, x, atol, rtol, maxit=40, maxit_fgmres=40,
                 iarm += 1
 
                 if iarm > maxarm:
-                    return xold, 1
+                    return xold, True
                 # End of Armijo line search
             x = xt
             f0 = ft
@@ -213,9 +216,9 @@ def newton_krylov(f, x, atol, rtol, maxit=40, maxit_fgmres=40,
                 etanew = torch.max(etanew, gamma*etaold**2)
             gmres_eta = torch.max( torch.min(etanew, etamax), 0.5*stop_tol/fnrm)
         if fnrm > stop_tol:
-            return x, 1
+            return x, True
         else:
-            return x, 0
+            return x, False
 
 
 def dkrylov(f0, f, x, etamax, lmaxit, restart_limit):
@@ -250,3 +253,33 @@ def parab3p(lambdac=torch.DoubleTensor(1.), lambdam=torch.DoubleTensor(1.), ff0=
         return sigma0*lambdac
     else:
         return sigma1*lambdac
+
+
+@jit.script
+def explicit_newton(f, x, reltol=torch.tensor(1e-6), atol=torch.tensor(1e-6), maxit=40):
+    """
+
+    :param f: f(x) is a function that evaluates the residual of the current stage
+     x - sum_j^{i-1}\delta t k_j -  \delta t *A_{i,i}*\dot{x}(t,x)
+     where k is the value of the previous i-1 stages
+    :param x: initial guess
+    :param reltol:
+    :param atol:
+    :param maxit:
+    :return: solution x
+    ierr = False for successful termination
+    ierr = True if the Newton algorithm did not converge
+    """
+    # inspired by https://bitbucket.org/drreynolds/rklab/src/master/newton.m
+    s = torch.ones_like(x)
+    for i in range(maxit):
+        F = f(x)
+        if torch.norm(s, p=float('inf')) < reltol or torch.norm(F, p=float('inf')) < atol:
+            return x, False
+        A = explicit_jacobian(x, F)# might be slow;
+        # for Diagonally Implicit Runge Kutta savings might be made if we consider
+        # the special structure of the Jacobian of the residual
+        #  I - h*A_{i,i} * \frac{\partial \dot{x}(x,t){\partial x}
+        s = torch.solve(F.unsqueeze(0), A.unsqueeze(0))
+        x -= s.squeeze(0)
+    return x, True

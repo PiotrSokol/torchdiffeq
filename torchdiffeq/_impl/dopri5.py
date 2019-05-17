@@ -4,7 +4,7 @@ from .misc import (
     _scaled_dot_product, _convert_to_tensor, _is_finite, _select_initial_step, _handle_unused_kwargs, _is_iterable,
     _optimal_step_size, _compute_error_ratio
 )
-from .solvers import AdaptiveStepsizeODESolver
+from .solvers import AdaptiveStepsizeODESolver, RungeKuttaAbstract
 from .interp import _interp_fit, _interp_evaluate
 from .rk_common import _RungeKuttaState, _ButcherTableau, _runge_kutta_step
 
@@ -55,7 +55,7 @@ def _ta_append(list_of_tensors, value):
     return list_of_tensors
 
 
-class Dopri5Solver(AdaptiveStepsizeODESolver):
+class Dopri5Solver(AdaptiveStepsizeODESolver, RungeKuttaAbstract):
 
     def __init__(
         self, func, y0, rtol, atol, first_step=None, safety=0.9, ifactor=10.0, dfactor=0.2, max_num_steps=2**31 - 1,
