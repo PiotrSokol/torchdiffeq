@@ -280,6 +280,6 @@ def explicit_newton(f, x, reltol=torch.tensor(1e-6), atol=torch.tensor(1e-6), ma
         # for Diagonally Implicit Runge Kutta savings might be made if we consider
         # the special structure of the Jacobian of the residual
         #  I - h*A_{i,i} * \frac{\partial \dot{x}(x,t){\partial x}
-        s = torch.solve(F.unsqueeze(0), A.unsqueeze(0))
-        x -= s.squeeze(0)
+        s = torch.solve(F, A)
+        x -= s
     return x, True

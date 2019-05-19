@@ -2,6 +2,8 @@ import abc
 import torch
 import numpy as np
 from .misc import _assert_increasing, _handle_unused_kwargs
+from .rk_common import _ButcherTableau
+from itertools import product
 
 
 class RungeKuttaAbstract(object):
@@ -34,13 +36,14 @@ class RKSymplecticODESolver(RungeKuttaAbstract):
         _handle_unused_kwargs(self, unused_kwargs)
         del unused_kwargs
         self.tableau = tableau
-
+        self.tableau_to_array(assign_self=True)
+        self.stages = len(tableau.alpha) -1
         if self.is_symmetric == False:
             self.adjoint_tableau = self.make_adjoint_tableau()
         else:
             self.adjoint_tableau = tableau
 
-    def tableau_to_array(self):
+    def tableau_to_array(self, assign_self=False):
         """
 
         :return: A, the Runge Kutta matrix
@@ -49,25 +52,55 @@ class RKSymplecticODESolver(RungeKuttaAbstract):
         """
         nstages = len(self.tableau.c_sol)
         A = np.zeros([nstages, nstages])
-        if len(self.tableau.beta) < nstages:
-            first = 1
+        if not isinstance(self.tableau.beta, list):
+            if len(self.tableau.beta) < nstages:
+                first = 1
+            else:
+                first = 0
+            for i in range(first, len(self.tableau.beta)):
+                A[i, :len(self.tableau.beta[i])] = np.array(self.tableau.beta[i])
         else:
-            first = 0
-        for i in range(first, len(self.tableau.beta)):
-            A[i, :len(self.tableau.beta[i])] = np.array(self.tableau.beta[i])
+            A = self.tableau.beta
+            pass
         b = np.array(self.tableau.alpha)
         c = np.array(self.tableau.c_sol)
-        return A, b, c
+        if assign_self is False:
+            return A, b, c
+        elif not isinstance(self.tableau.beta,list):
+            self.tableau.beta = A
 
-    def array_to_tableau(self):
-        raise NotImplementedError
+    def array_to_tableau(self, A, b, c):
+        """
+        Creates a _ButcherTableau named tuple from three numpy arrays
+        """
+        BT = _ButcherTableau(alpha=c.tolist(),
+                             beta=A.tolist(),
+                             c_sol=b.tolist())
+        raise BT
 
     @property
     def is_symmetric(self):
         pass
 
+    @property
+    def is_symplectic(self):
+        A,b,c = self.tableau_to_array()
+        if np.all(((np.tril(A) - np.diag(np.diag(A)))/ np.diag(A)) == np.tril(np.ones_like(A))):
+            tril_condition = True
+        if np.allclose(np.diagflat(A).flatten()-b.flatten()/2) and tril_condition:
+            return True
+        else:
+            False
+
     def make_adjoint_tableau(self):
-        pass
+        A, b, c = self.tableau_to_array()
+        A_new = np.zeros_like(A)
+        b_new = np.zeros_like(b)
+        st = self.stages
+        for i,j in product(range(len(b)), range(len(b))):
+            A_new[i,j] = b[st+1-j] - A[st+1-i, st+1-j]
+            b_new[j] = b[st+1-j]
+        return self.array_to_tableau(A_new,b_new,c)
 
 class AdaptiveStepsizeODESolver(object):
     __metaclass__ = abc.ABCMeta
